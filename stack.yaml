@@ -1,0 +1,11 @@
+flags: {}
+packages:
+- '.'
+- '../linear-extra'
+- '../lens-extra'
+- '../glfw-pal'
+- '../vr-pal'
+- '../openvr-hs'
+- '../gl-pal'
+- '../halive'
+resolver: nightly-2015-11-03
