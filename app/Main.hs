@@ -1,12 +1,12 @@
 module Main where
 
-import Cubicle
+import Cubensis
 
 
 
 main :: IO ()
 main = do
-  cubicle $ \t -> 
+  cubensis $ \t -> 
     [ newCube 
         
         { cubeColor = hslColor (x+z+t) 0.8 0.7 1 

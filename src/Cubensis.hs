@@ -1,8 +1,8 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE FlexibleContexts #-}
-module Cubicle 
-  ( module Cubicle
+module Cubensis 
+  ( module Cubensis
   , module Exports
   ) where
 
@@ -36,9 +36,9 @@ data Uniforms = Uniforms
   , uColor :: UniformLocation (V4 GLfloat) 
   } deriving Data
 
-cubicle :: (Fractional a) => (a -> [Cube]) -> IO ()
-cubicle getPositions = do
-  vrPal@VRPal{..} <- reacquire 0 $ initVRPal "Cubicle" NoGCPerFrame [UseOpenVR]
+cubensis :: (Fractional a) => (a -> [Cube]) -> IO ()
+cubensis getPositions = do
+  vrPal@VRPal{..} <- reacquire 0 $ initVRPal "Cubensis" NoGCPerFrame [UseOpenVR]
 
   shader        <- createShaderProgram "src/geo.vert" "src/geo.frag"
   uniforms      <- acquireUniforms shader
