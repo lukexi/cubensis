@@ -38,7 +38,7 @@ data Uniforms = Uniforms
 
 cubensis :: (Fractional a) => (a -> [Cube]) -> IO ()
 cubensis getPositions = do
-  vrPal@VRPal{..} <- reacquire 0 $ initVRPal "Cubensis" NoGCPerFrame [UseOpenVR]
+  vrPal@VRPal{..} <- reacquire 0 $ initVRPal "Cubensis" [UseOpenVR]
 
   shader        <- createShaderProgram "src/geo.vert" "src/geo.frag"
   uniforms      <- acquireUniforms shader
