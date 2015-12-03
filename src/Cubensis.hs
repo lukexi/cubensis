@@ -36,6 +36,9 @@ data Uniforms = Uniforms
   , uColor :: UniformLocation (V4 GLfloat) 
   } deriving Data
 
+getNow :: Fractional a => IO a
+getNow = realToFrac . utctDayTime <$> getCurrentTime
+
 cubensis :: (Fractional a) => (a -> [Cube]) -> IO ()
 cubensis getPositions = do
   vrPal@VRPal{..} <- reacquire 0 $ initVRPal "Cubensis" [UseOpenVR]
@@ -52,10 +55,13 @@ cubensis getPositions = do
   -- let viewMat = viewMatrixFromPose newPose
   let view44 = viewMatrix (V3 0 0 5) (axisAngle (V3 0 1 0) 0)
 
+  start <- getNow
+
   whileWindow gpWindow $ do
     processEvents gpEvents $ closeOnEscape gpWindow
 
-    now <- realToFrac . utctDayTime <$> getCurrentTime
+    -- Have time start at 0 seconds
+    now <- (subtract start) <$> getNow
 
     renderWith vrPal view44 
       (glClear (GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT))
