@@ -8,4 +8,5 @@ packages:
 - '../openvr-hs'
 - '../gl-pal'
 - '../halive'
+- '../bindings-GLFW'
 resolver: nightly-2015-11-03
