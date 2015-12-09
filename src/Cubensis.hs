@@ -52,18 +52,17 @@ cubensis getPositions = do
   glEnable GL_DEPTH_TEST
   glClearColor 0.0 0.0 0.1 1
 
-  -- let viewMat = viewMatrixFromPose newPose
-  let view44 = viewMatrix (V3 0 0 5) (axisAngle (V3 0 1 0) 0)
+  let player = Pose (V3 0 0 5) (axisAngle (V3 0 1 0) 0)
 
   start <- getNow
 
-  whileWindow gpWindow $ do
+  whileVR vrPal $ \headM44 hands -> do
     processEvents gpEvents $ closeOnEscape gpWindow
 
     -- Have time start at 0 seconds
     now <- (subtract start) <$> getNow
 
-    renderWith vrPal view44 
+    renderWith vrPal player headM44
       (glClear (GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT))
       $ \proj44 eyeView44 -> do
           let projView = proj44 !*! eyeView44
