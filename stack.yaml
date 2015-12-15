@@ -8,5 +8,7 @@ packages:
 - '../openvr-hs'
 - '../gl-pal'
 - '../halive'
+- '../tinyrick'
+- '../freetype-gl-mini'
 - '../bindings-GLFW'
 resolver: nightly-2015-12-03
