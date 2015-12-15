@@ -10,7 +10,6 @@ import Graphics.UI.GLFW.Pal as Exports
 import Graphics.VR.Pal as Exports
 import Graphics.GL.Pal as Exports
 
-import Data.Time
 import Control.Monad
 import Control.Monad.Reader
 import Halive.Utils
@@ -36,9 +35,6 @@ data Uniforms = Uniforms
   , uColor :: UniformLocation (V4 GLfloat) 
   } deriving Data
 
-getNow :: Fractional a => IO a
-getNow = realToFrac . utctDayTime <$> getCurrentTime
-
 cubensis :: (Fractional a) => (a -> [Cube]) -> IO ()
 cubensis getPositions = do
   vrPal@VRPal{..} <- reacquire 0 $ initVRPal "Cubensis" [UseOpenVR]
@@ -56,7 +52,7 @@ cubensis getPositions = do
 
   start <- getNow
 
-  whileVR vrPal $ \headM44 hands -> do
+  whileVR vrPal $ \headM44 _hands -> do
     processEvents gpEvents $ closeOnEscape gpWindow
 
     -- Have time start at 0 seconds
@@ -74,7 +70,7 @@ render :: (MonadIO m, MonadReader (Shape u) m)
 render Uniforms{..} projView cubes = do
   forM_ cubes $ \Cube{..} -> do
     let model = mkTransformation cubeRotation cubePosition !*! scaleMatrix cubeScale
-    uniformV4 uColor cubeColor
+    uniformV4  uColor cubeColor
     uniformM44 uMVP   (projView !*! model)
     uniformM44 uModel model
     drawShape

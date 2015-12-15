@@ -22,7 +22,6 @@ library
                      , vr-pal
                      , linear-extra
                      , lens-extra
-                     , time
                      , halive
                      , mtl
   default-language:    Haskell2010
