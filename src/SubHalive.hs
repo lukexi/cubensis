@@ -71,13 +71,20 @@ withGHCSession mainFileName extraImportPaths action = do
         -- If this is a stack project, add its package DBs
         dflags2 <- updateDynFlagsWithStackDB dflags1
 
-        -- Make sure we're configured for live-reload, and turn off the GHCi sandbox
-        -- since it breaks OpenGL/GUI usage
+        -- Make sure we're configured for live-reload
         let dflags3 = dflags2 { hscTarget   = HscInterpreted
                               , ghcLink     = LinkInMemory
                               , ghcMode     = CompManager
                               , importPaths = allImportPaths
-                              } `gopt_unset` Opt_GhciSandbox
+                              } 
+                              -- turn off the GHCi sandbox
+                              -- since it breaks OpenGL/GUI usage
+                              `gopt_unset` Opt_GhciSandbox 
+                              -- GHC seems to try to "debounce" compilations within
+                              -- about a half second (i.e., it won't recompile) 
+                              -- This fixes that, but probably isn't quite what we want
+                              -- since it will cause extra files to be recompiled...
+                              `gopt_set` Opt_ForceRecomp
         
         -- We must call setSessionDynFlags before calling initPackages or any other GHC API
         _ <- setSessionDynFlags dflags3

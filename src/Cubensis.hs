@@ -30,7 +30,6 @@ main = do
   vrPal@VRPal{..} <- reacquire 0 $ initVRPal "Cubensis" [UseOpenVR]
 
   shader        <- createShaderProgram "shaders/geo.vert" "shaders/geo.frag"
-  uniforms      <- acquireUniforms shader
 
   cubeGeo       <- cubeGeometry 1 5
   cubeShape     <- (makeShape cubeGeo shader :: IO (Shape Uniforms))
@@ -38,7 +37,7 @@ main = do
   glyphProg     <- createShaderProgram "shaders/glyph.vert" "shaders/glyph.frag"
   font          <- createFont "fonts/SourceCodePro-Regular.ttf" 50 glyphProg
 
-  textMVar <- reacquire 1 $ newMVar =<< textRendererFromFile font "defs/Cubes1.hs"
+  textMVar <- newMVar =<< textRendererFromFile font "defs/Cubes1.hs"
 
   funcMVar <- recompilerForExpression "defs/Cubes1.hs" "someCubes" (const [])
 
@@ -71,7 +70,7 @@ main = do
       $ \proj44 eyeView44 -> do
           let projViewM44 = proj44 !*! eyeView44
           withShape cubeShape $ 
-            renderCubes (uniforms :: Uniforms) projViewM44 cubes
+            renderCubes projViewM44 cubes
           let textMVP = projViewM44 !*! textM44
           renderText text textMVP (V3 1 1 1)
 
@@ -90,9 +89,10 @@ handleEvents VRPal{..} textMVar textModelM44 playerPose = processEvents gpEvents
     newText   <- castRayToBuffer ray text textModelM44
     return (newText, ())
 
-renderCubes :: (MonadIO m, MonadReader (Shape u) m) 
-       => Uniforms -> M44 GLfloat -> [Cube] -> m ()
-renderCubes Uniforms{..} projView cubes = do
+renderCubes :: (MonadIO m, MonadReader (Shape Uniforms) m) 
+            => M44 GLfloat -> [Cube] -> m ()
+renderCubes projView cubes = do
+  Uniforms{..} <- asks sUniforms
   forM_ cubes $ \Cube{..} -> do
     let model = mkTransformation cubeRotation cubePosition !*! scaleMatrix cubeScale
     uniformV4  uColor cubeColor
