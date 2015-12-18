@@ -9,6 +9,7 @@ import Graphics.GL.Pal as Exports
 import TinyRick
 
 import Control.Monad
+import Control.Lens
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Concurrent
@@ -25,9 +26,32 @@ data Uniforms = Uniforms
   } deriving Data
 
 
+data Editor a = Editor
+  { edText     :: MVar TextRenderer
+  , edExpr     :: MVar a
+  , edModelM44 :: M44 GLfloat
+  }
+
+makeExpressionEditor ghcChan font fileName expr modelM44 = do
+  textMVar <- newMVar =<< textRendererFromFile font fileName
+  funcMVar <- recompilerForExpression ghcChan fileName expr (const [])
+
+  return (Editor textMVar funcMVar modelM44)
+-- Negative == Clockwise
+textTilt = -0.1 * 2 * pi
+
+textM44 = mkTransformation (axisAngle (V3 1 0 0) textTilt) (V3 0 (-1) 4)
+
 main :: IO ()
 main = do
+  ghcChan <- startGHC ["defs"]
+
   vrPal@VRPal{..} <- reacquire 0 $ initVRPal "Cubensis" [UseOpenVR]
+
+  glEnable GL_DEPTH_TEST
+  glEnable GL_BLEND
+  glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+  glClearColor 0.0 0.0 0.1 1
 
   shader        <- createShaderProgram "shaders/geo.vert" "shaders/geo.frag"
 
@@ -37,64 +61,65 @@ main = do
   glyphProg     <- createShaderProgram "shaders/glyph.vert" "shaders/glyph.frag"
   font          <- createFont "fonts/SourceCodePro-Regular.ttf" 50 glyphProg
 
-  textMVar <- newMVar =<< textRendererFromFile font "defs/Cubes1.hs"
+  expressionEditor1 <- makeExpressionEditor ghcChan font "defs/Cubes1.hs" "someCubes1" (identity & translation .~ V3 0 0 0)
+  expressionEditor2 <- makeExpressionEditor ghcChan font "defs/Cubes2.hs" "someCubes2" (identity & translation .~ V3 1 0 0)
 
-  funcMVar <- recompilerForExpression "defs/Cubes1.hs" "someCubes" (const [])
-
-  glEnable GL_DEPTH_TEST
-  glEnable GL_BLEND
-  glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
-  glClearColor 0.0 0.0 0.1 1
-
+  -- let editors = expressionEditor1:[]
+  let editors = expressionEditor1:expressionEditor2:[]
   let player  = Pose (V3 0 0 5) (axisAngle (V3 0 1 0) 0)
-      textTilt = -0.1 * 2 * pi
-      textM44 = mkTransformation (axisAngle (V3 1 0 0) textTilt) (V3 0 (-1) 4)
-
+  
   start <- getNow
 
   whileVR vrPal $ \headM44 _hands -> do
     player' <- execStateT (applyMouseLook gpWindow id) player
 
-    handleEvents vrPal textMVar textM44 player'
+    let activeEditor = head editors
+    handleEvents vrPal player' activeEditor
 
     -- Have time start at 0 seconds
     now <- (subtract start) <$> getNow
     let _ = now::Float
 
-    text <- readMVar textMVar
-    func <- readMVar funcMVar
-    let cubes = func now
     renderWith vrPal player' headM44
       (glClear (GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT))
       $ \proj44 eyeView44 -> do
           let projViewM44 = proj44 !*! eyeView44
-          withShape cubeShape $ 
-            renderCubes projViewM44 cubes
-          let textMVP = projViewM44 !*! textM44
-          renderText text textMVP (V3 1 1 1)
+
+          forM_ editors $ \Editor{..} -> do
+            func <- readMVar edExpr
+            text <- readMVar edText
+            let cubes = func now
+            withShape cubeShape $ 
+              renderCubes projViewM44 edModelM44 cubes
+
+            let textMVP = projViewM44 !*! edModelM44 !*! textM44
+            renderText text textMVP (V3 1 1 1)
 
 
-handleEvents :: VRPal -> MVar TextRenderer -> M44 Float -> Pose Float -> IO ()
-handleEvents VRPal{..} textMVar textModelM44 playerPose = processEvents gpEvents $ \e -> do
+renderCubes :: (MonadIO m, MonadReader (Shape Uniforms) m) 
+            => M44 GLfloat -> M44 GLfloat -> [Cube] -> m ()
+renderCubes projViewM44 parentModelM44 cubes = do
+  Uniforms{..} <- asks sUniforms
+  forM_ cubes $ \Cube{..} -> do
+    let modelM44 = parentModelM44 
+                   !*! mkTransformation cubeRotation cubePosition
+                   !*! scaleMatrix cubeScale
+    uniformV4  uColor cubeColor
+    uniformM44 uMVP   (projViewM44 !*! modelM44)
+    uniformM44 uModel modelM44
+    drawShape
+
+
+handleEvents :: VRPal -> Pose Float -> Editor a -> IO ()
+handleEvents VRPal{..} playerPose Editor{..} = processEvents gpEvents $ \e -> do
   closeOnEscape gpWindow e
 
-  modifyMVar textMVar $ \text -> do 
+  modifyMVar edText $ \text -> do 
     newText <- execStateT (handleTextBufferEvent gpWindow e id) text
     return (newText, ())
 
-  onMouseDown e $ \_ -> modifyMVar textMVar $ \text -> do
+  onMouseDown e $ \_ -> modifyMVar edText $ \text -> do
     winProj44 <- getWindowProjection gpWindow 45 0.1 1000
     ray       <- cursorPosToWorldRay gpWindow winProj44 playerPose
-    newText   <- castRayToBuffer ray text textModelM44
+    newText   <- castRayToBuffer ray text (edModelM44 !*! textM44)
     return (newText, ())
-
-renderCubes :: (MonadIO m, MonadReader (Shape Uniforms) m) 
-            => M44 GLfloat -> [Cube] -> m ()
-renderCubes projView cubes = do
-  Uniforms{..} <- asks sUniforms
-  forM_ cubes $ \Cube{..} -> do
-    let model = mkTransformation cubeRotation cubePosition !*! scaleMatrix cubeScale
-    uniformV4  uColor cubeColor
-    uniformM44 uMVP   (projView !*! model)
-    uniformM44 uModel model
-    drawShape

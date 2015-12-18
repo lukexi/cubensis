@@ -35,33 +35,38 @@ eventListenerForFile fileName = do
         forever (threadDelay 10000000)
     return eventChan
 
-recompilerForExpression :: FilePath -> String -> a -> IO (MVar a)
-recompilerForExpression fileName expression defaultValue = do
+-- recompilerForExpression :: FilePath -> String -> a -> IO (MVar a)
+recompilerForExpression ghcChan fileName expression defaultValue = do
 
     valueMVar <- newMVar defaultValue
 
     listenerChan <- eventListenerForFile fileName
-  
-    _ <- forkOS . void . withGHCSession fileName [] $ do
-        let recompile = do
-                result <- recompileTargets expression
-                case result of
-                  Just validResult -> liftIO (swapMVar valueMVar validResult) >> return ()
-                  Nothing          -> return ()
-        recompile
-        forever $ do
-            _ <- liftIO (readChan listenerChan)
-            recompile
+    
+    -- Compile immediately
+    writeChan ghcChan (fileName, expression, valueMVar)
+
+    _ <- forkIO . forever $ do
+        _ <- liftIO (readChan listenerChan)
+        writeChan ghcChan (fileName, expression, valueMVar)
+
     return valueMVar
 
--- Starts up a GHC session and then runs the given action within it
-withGHCSession :: FilePath -> [FilePath] -> Ghc (Maybe a) -> IO (Maybe a)
-withGHCSession mainFileName extraImportPaths action = do
-    defaultErrorHandler defaultFatalMessager defaultFlushOut $ runGhc (Just libdir) $ do
-        -- Add the main file's path to the import path list
-        let mainFilePath   = dropFileName mainFileName
-            allImportPaths = mainFilePath:extraImportPaths
+startGHC importPaths = do
+    ghcChan <- newChan
 
+    _ <- forkOS . void . withGHCSession importPaths . forever $ do
+        (fileName, expression, resultMVar) <- liftIO (readChan ghcChan)
+        setTargets =<< sequence [guessTarget fileName Nothing]
+        result <- recompileTargets expression
+        case result of
+            Just validResult -> liftIO (swapMVar resultMVar validResult) >> return ()
+            Nothing          -> return ()
+    return ghcChan
+
+-- Starts up a GHC session and then runs the given action within it
+withGHCSession :: [FilePath] -> Ghc a -> IO a
+withGHCSession importPaths action = do
+    defaultErrorHandler defaultFatalMessager defaultFlushOut $ runGhc (Just libdir) $ do
         -- Get the default dynFlags
         dflags0 <- getSessionDynFlags
         
@@ -75,7 +80,7 @@ withGHCSession mainFileName extraImportPaths action = do
         let dflags3 = dflags2 { hscTarget   = HscInterpreted
                               , ghcLink     = LinkInMemory
                               , ghcMode     = CompManager
-                              , importPaths = allImportPaths
+                              , importPaths = importPaths
                               } 
                               -- turn off the GHCi sandbox
                               -- since it breaks OpenGL/GUI usage
@@ -95,8 +100,7 @@ withGHCSession mainFileName extraImportPaths action = do
         -- Initialize the dynamic linker
         liftIO (initDynLinker dflags4)
 
-        -- Set the given filename as a compilation target
-        setTargets =<< sequence [guessTarget mainFileName Nothing]
+        
 
         action
 
