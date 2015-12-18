@@ -47,11 +47,10 @@ main = do
   glClearColor 0.0 0.0 0.1 1
 
   let player  = Pose (V3 0 0 5) (axisAngle (V3 0 1 0) 0)
-      textM44 = mkTransformation (axisAngle (V3 1 0 0) 0) (V3 0 0 4)
+      textTilt = -0.1 * 2 * pi
+      textM44 = mkTransformation (axisAngle (V3 1 0 0) textTilt) (V3 0 (-1) 4)
 
   start <- getNow
-
-  
 
   whileVR vrPal $ \headM44 _hands -> do
     player' <- execStateT (applyMouseLook gpWindow id) player
