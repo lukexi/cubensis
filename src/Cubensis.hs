@@ -1,10 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE FlexibleContexts #-}
-module Cubensis 
-  ( module Cubensis
-  , module Exports
-  ) where
+module Cubensis where
 
 import Graphics.UI.GLFW.Pal as Exports
 import Graphics.VR.Pal as Exports
@@ -16,21 +13,10 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Control.Concurrent
 import Halive.Utils
+import SubHalive
+import Data.Maybe
 
-data Cube = Cube
-  { cubeColor :: V4 GLfloat
-  , cubeScale :: V3 GLfloat
-  , cubePosition :: V3 GLfloat
-  , cubeRotation :: Quaternion GLfloat
-  }
-
-newCube :: Cube
-newCube = Cube
-  { cubeColor    = V4 1 1 1 1
-  , cubeScale    = V3 1 1 1
-  , cubePosition = V3 0 0 0
-  , cubeRotation = axisAngle (V3 0 1 0) 0
-  }
+import Types
 
 data Uniforms = Uniforms 
   { uMVP   :: UniformLocation (M44 GLfloat) 
@@ -38,8 +24,9 @@ data Uniforms = Uniforms
   , uColor :: UniformLocation (V4 GLfloat) 
   } deriving Data
 
-cubensis :: (Real a, Fractional a) => (a -> [Cube]) -> IO ()
-cubensis getPositions = do
+
+main :: IO ()
+main = do
   vrPal@VRPal{..} <- reacquire 0 $ initVRPal "Cubensis" [UseOpenVR]
 
   shader        <- createShaderProgram "shaders/geo.vert" "shaders/geo.frag"
@@ -51,7 +38,9 @@ cubensis getPositions = do
   glyphProg     <- createShaderProgram "shaders/glyph.vert" "shaders/glyph.frag"
   font          <- createFont "fonts/SourceCodePro-Regular.ttf" 50 glyphProg
 
-  textMVar <- reacquire 1 $ newMVar =<< textRendererFromFile font "app/Main.hs"
+  textMVar <- reacquire 1 $ newMVar =<< textRendererFromFile font "defs/Cubes1.hs"
+
+  funcMVar <- recompilerForExpression "defs/Cubes1.hs" "someCubes" (const [])
 
   glEnable GL_DEPTH_TEST
   glEnable GL_BLEND
@@ -63,6 +52,8 @@ cubensis getPositions = do
 
   start <- getNow
 
+  
+
   whileVR vrPal $ \headM44 _hands -> do
     player' <- execStateT (applyMouseLook gpWindow id) player
 
@@ -70,14 +61,17 @@ cubensis getPositions = do
 
     -- Have time start at 0 seconds
     now <- (subtract start) <$> getNow
+    let _ = now::Float
 
     text <- readMVar textMVar
+    func <- readMVar funcMVar
+    let cubes = func now
     renderWith vrPal player' headM44
       (glClear (GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT))
       $ \proj44 eyeView44 -> do
           let projViewM44 = proj44 !*! eyeView44
           withShape cubeShape $ 
-            renderCubes (uniforms :: Uniforms) projViewM44 (getPositions now)
+            renderCubes (uniforms :: Uniforms) projViewM44 cubes
           let textMVP = projViewM44 !*! textM44
           renderText text textMVP (V3 1 1 1)
 
