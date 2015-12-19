@@ -28,7 +28,7 @@ data Uniforms = Uniforms
 
 data Editor a = Editor
   { edText     :: MVar TextRenderer
-  , edExpr     :: MVar a
+  , edExpr     :: MVar (a, [String])
   , edModelM44 :: M44 GLfloat
   }
 
@@ -41,6 +41,7 @@ makeExpressionEditor ghcChan font fileName expr modelM44 = do
 textTilt = -0.1 * 2 * pi
 
 textM44 = mkTransformation (axisAngle (V3 1 0 0) textTilt) (V3 0 (-1) 4)
+player  = Pose (V3 0 0 5) (axisAngle (V3 0 1 0) 0)
 
 main :: IO ()
 main = do
@@ -61,12 +62,10 @@ main = do
   glyphProg     <- createShaderProgram "shaders/glyph.vert" "shaders/glyph.frag"
   font          <- createFont "fonts/SourceCodePro-Regular.ttf" 50 glyphProg
 
-  expressionEditor1 <- makeExpressionEditor ghcChan font "defs/Cubes1.hs" "someCubes1" (identity & translation .~ V3 0 0 0)
-  expressionEditor2 <- makeExpressionEditor ghcChan font "defs/Cubes2.hs" "someCubes2" (identity & translation .~ V3 1 0 0)
-
-  -- let editors = expressionEditor1:[]
-  let editors = expressionEditor1:expressionEditor2:[]
-  let player  = Pose (V3 0 0 5) (axisAngle (V3 0 1 0) 0)
+  editors <- sequence 
+    [ makeExpressionEditor ghcChan font "defs/Cubes1.hs" "someCubes1" (identity & translation .~ V3 0 0 0)
+    , makeExpressionEditor ghcChan font "defs/Cubes2.hs" "someCubes2" (identity & translation .~ V3 3 0 0)
+    ]
   
   start <- getNow
 
@@ -86,7 +85,7 @@ main = do
           let projViewM44 = proj44 !*! eyeView44
 
           forM_ editors $ \Editor{..} -> do
-            func <- readMVar edExpr
+            (func, errors) <- readMVar edExpr
             text <- readMVar edText
             let cubes = func now
             withShape cubeShape $ 
@@ -94,6 +93,13 @@ main = do
 
             let textMVP = projViewM44 !*! edModelM44 !*! textM44
             renderText text textMVP (V3 1 1 1)
+
+            let errorsMVP = projViewM44 
+                            !*! edModelM44 
+                            !*! (identity & translation .~ V3 1 0 0)
+                            !*! textM44
+            errorRenderer <- createTextRenderer font (textBufferFromString "noFile" (unlines errors))
+            renderText errorRenderer errorsMVP (V3 1 0.5 0.5)
 
 
 renderCubes :: (MonadIO m, MonadReader (Shape Uniforms) m) 

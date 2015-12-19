@@ -6,13 +6,15 @@ import Linker
 import Packages
 import DynFlags
 import Exception
+import ErrUtils
+import HscTypes
 import GHC.Paths
 import Outputable
 import Unsafe.Coerce
 
 import Control.Monad
 import Control.Monad.IO.Class
-
+import Data.IORef
 import Control.Concurrent
 import FindPackageDBs
 
@@ -38,7 +40,7 @@ eventListenerForFile fileName = do
 -- recompilerForExpression :: FilePath -> String -> a -> IO (MVar a)
 recompilerForExpression ghcChan fileName expression defaultValue = do
 
-    valueMVar <- newMVar defaultValue
+    valueMVar <- newMVar (defaultValue, [])
 
     listenerChan <- eventListenerForFile fileName
     
@@ -56,17 +58,23 @@ startGHC importPaths = do
 
     _ <- forkOS . void . withGHCSession importPaths . forever $ do
         (fileName, expression, resultMVar) <- liftIO (readChan ghcChan)
-        setTargets =<< sequence [guessTarget fileName Nothing]
-        result <- recompileTargets expression
-        case result of
-            Just validResult -> liftIO (swapMVar resultMVar validResult) >> return ()
-            Nothing          -> return ()
+        
+        result <- recompileTargets fileName expression
+        liftIO $ case result of
+            Right validResult -> do
+                let noErrors = []
+                void (swapMVar resultMVar (validResult, noErrors))
+            -- If we get a failure, leave the old result alone so it can still be used
+            -- until the errors are fixed.
+            Left  newErrors   -> modifyMVar_ resultMVar $ \(validResult, oldErrors) ->
+                 return (validResult, newErrors)
     return ghcChan
 
 -- Starts up a GHC session and then runs the given action within it
 withGHCSession :: [FilePath] -> Ghc a -> IO a
 withGHCSession importPaths action = do
-    defaultErrorHandler defaultFatalMessager defaultFlushOut $ runGhc (Just libdir) $ do
+    -- defaultErrorHandler defaultFatalMessager defaultFlushOut $ runGhc (Just libdir) $ do
+    runGhc (Just libdir) $ do
         -- Get the default dynFlags
         dflags0 <- getSessionDynFlags
         
@@ -104,29 +112,55 @@ withGHCSession importPaths action = do
 
         action
 
+gatherErrors sourceError = do
+    printException sourceError
+    dflags <- getSessionDynFlags
+    let errorSDocs = pprErrMsgBagWithLoc (srcErrorMessages sourceError)
+        errorStrings = map (showSDoc dflags) errorSDocs
+    return errorStrings
+
+
 -- Recompiles the current targets
-recompileTargets :: String -> Ghc (Maybe a)
-recompileTargets expression = catchExceptions . handleSourceError (\e -> printException e >> return Nothing) $ do
+recompileTargets :: FilePath -> String -> Ghc (Either [String] a)
+recompileTargets fileName expression = 
+    -- NOTE: handleSourceError doesn't actually seem to do anything, and we use
+    -- the IORef + log_action solution instead. The API docs claim 'load' should
+    -- throw SourceErrors but it doesn't afaict.
+    catchExceptions . handleSourceError (fmap Left . gatherErrors) $ do
 
-    -- Get the dependencies of the main target
-    graph <- depanal [] False
+        setTargets =<< sequence [guessTarget fileName Nothing]
 
-    -- Reload the main target
-    loadSuccess <- load LoadAllTargets
+        errorsRef <- liftIO (newIORef "")
+        dflags <- getSessionDynFlags
+        _ <- setSessionDynFlags dflags { log_action = logHandler errorsRef }
 
-    if failed loadSuccess 
-        then 
-            return Nothing
-        else do
-            -- We must parse and typecheck modules before they'll be available for usage
-            forM_ graph (typecheckModule <=< parseModule)
-            
-            -- Load the dependencies of the main target
-            setContext (IIModule . ms_mod_name <$> graph)
+        -- Get the dependencies of the main target
+        graph <- depanal [] False
 
-            result <- compileExpr expression
+        -- Reload the main target
+        loadSuccess <- load LoadAllTargets
 
-            return (Just . unsafeCoerce $ result)
+        if failed loadSuccess 
+            then do
+                errors <- liftIO (readIORef errorsRef)
+                return (Left [errors])
+            else do
+                -- We must parse and typecheck modules before they'll be available for usage
+                forM_ graph (typecheckModule <=< parseModule)
+                
+                -- Load the dependencies of the main target
+                setContext (IIModule . ms_mod_name <$> graph)
+
+                result <- unsafeCoerce <$> compileExpr expression
+
+                return (Right result)
+
+catchExceptions :: ExceptionMonad m => m (Either [String] a) -> m (Either [String] a)
+catchExceptions a = gcatch a 
+    (\(_x :: SomeException) -> do
+        liftIO (putStrLn ("Caught exception during recompileTargets: " ++ show _x))
+        return (Left [show _x]))
+
 
 typecheckTargets :: GhcMonad m => m () -> m ()
 typecheckTargets onFailure = handleSourceError (\e -> onFailure >> printException e) $ do
@@ -141,9 +175,7 @@ typecheckTargets onFailure = handleSourceError (\e -> onFailure >> printExceptio
             -- Parse and typecheck modules to trigger any SourceErrors therein
             forM_ graph (typecheckModule <=< parseModule)
 
-catchExceptions :: ExceptionMonad m => m (Maybe a) -> m (Maybe a)
-catchExceptions a = gcatch a 
-    (\(_x :: SomeException) -> return Nothing)
+
 
 -- A helper from interactive-diagrams to print out GHC API values, 
 -- useful while debugging the API.
@@ -154,3 +186,14 @@ output a = do
     let style = defaultUserStyle
     let cntx  = initSDocContext dfs style
     liftIO $ print $ runSDoc (ppr a) cntx
+
+logHandler :: IORef String -> LogAction
+logHandler ref dflags severity srcSpan style msg =
+  case severity of
+     SevError   ->  modifyIORef' ref (++ ('\n':printDoc))
+     SevFatal   ->  modifyIORef' ref (++ ('\n':printDoc))
+     SevWarning ->  modifyIORef' ref (++ ('\n':printDoc))
+     _          ->  return () -- ignore the rest
+  where cntx = initSDocContext dflags style
+        locMsg = mkLocMessage severity srcSpan msg
+        printDoc = show (runSDoc locMsg cntx) 
