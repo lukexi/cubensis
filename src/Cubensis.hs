@@ -37,6 +37,7 @@ makeExpressionEditor ghcChan font fileName expr modelM44 = do
   funcMVar <- recompilerForExpression ghcChan fileName expr (const [])
 
   return (Editor textMVar funcMVar modelM44)
+
 -- Negative == Clockwise
 textTilt = -0.1 * 2 * pi
 

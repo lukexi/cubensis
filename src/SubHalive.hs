@@ -112,6 +112,7 @@ withGHCSession importPaths action = do
 
         action
 
+-- See note below - this isn't actually called right now
 gatherErrors sourceError = do
     printException sourceError
     dflags <- getSessionDynFlags
