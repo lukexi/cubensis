@@ -13,6 +13,9 @@ import Control.Lens
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Concurrent
+import Control.Exception
+import Control.DeepSeq
+
 import Halive.Utils
 import SubHalive
 
@@ -73,8 +76,9 @@ main = do
   font          <- createFont "fonts/SourceCodePro-Regular.ttf" 50 glyphProg
 
   editors <- sequence 
-    [ makeExpressionEditor ghcChan font "defs/Cubes1.hs" "someCubes1" (identity & translation .~ V3 0 0 0)
-    , makeExpressionEditor ghcChan font "defs/Cubes2.hs" "someCubes2" (identity & translation .~ V3 3 0 0)
+    [ makeExpressionEditor ghcChan font "defs/Sphere.hs" "sphere" (identity & translation .~ V3 0 0 0)
+    -- , makeExpressionEditor ghcChan font "defs/Cubes1.hs" "someCubes1" (identity & translation .~ V3 0 0 0)
+    -- , makeExpressionEditor ghcChan font "defs/Cubes2.hs" "someCubes2" (identity & translation .~ V3 3 0 0)
     ]
   
   start <- getNow
@@ -97,9 +101,11 @@ main = do
           forM_ editors $ \Editor{..} -> do
             (func, errors) <- readMVar edExpr
             text <- readMVar edText
-            let cubes = func now
+            let cubes = take 10000 (func now) -- Allow the function to try to return infinite cubes, but don't use them all
+            (cubes', runtimeErrors) <- handle (\e -> return ([], show (e::SomeException))) (return $!! (cubes, ""))
+            let errors' = runtimeErrors:errors
             withShape cubeShape $ 
-              renderCubes projViewM44 edModelM44 cubes
+              renderCubes projViewM44 edModelM44 cubes'
 
             let textMVP = projViewM44 !*! edModelM44 !*! textM44
             renderText text textMVP (V3 1 1 1)
@@ -108,7 +114,7 @@ main = do
                             !*! edModelM44 
                             !*! (identity & translation .~ V3 1 0 0)
                             !*! textM44
-            errorRenderer <- createTextRenderer font (textBufferFromString "noFile" (unlines errors))
+            errorRenderer <- createTextRenderer font (textBufferFromString "noFile" (unlines errors'))
             renderText errorRenderer errorsMVP (V3 1 0.5 0.5)
 
 

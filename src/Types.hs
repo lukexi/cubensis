@@ -1,12 +1,14 @@
+{-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
 module Types where
 import Graphics.GL.Pal
-
+import Control.DeepSeq
+import GHC.Generics
 data Cube = Cube
   { cubeColor :: V4 GLfloat
   , cubeScale :: V3 GLfloat
   , cubePosition :: V3 GLfloat
   , cubeRotation :: Quaternion GLfloat
-  } deriving Show
+  } deriving (Show, Generic, NFData)
 
 newCube :: Cube
 newCube = Cube
