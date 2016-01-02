@@ -19,12 +19,11 @@ import Control.Concurrent
 import FindPackageDBs
 
 import System.FSNotify
-import System.FilePath
 
 fileModifiedPredicate :: FilePath -> Event -> Bool
-fileModifiedPredicate fileName event = case event of
+fileModifiedPredicate _fileName event = case event of
     -- Modified path _ -> path == fileName
-    Modified path _ -> True
+    Modified _path _ -> True
     _               -> False
 
 eventListenerForFile :: FilePath -> IO (Chan Event)
@@ -37,7 +36,7 @@ eventListenerForFile fileName = do
         forever (threadDelay 10000000)
     return eventChan
 
--- recompilerForExpression :: FilePath -> String -> a -> IO (MVar a)
+recompilerForExpression :: Chan (FilePath, String, MVar (t, [String])) -> FilePath -> String -> t -> IO (MVar (t, [String]))
 recompilerForExpression ghcChan fileName expression defaultValue = do
 
     valueMVar <- newMVar (defaultValue, [])
@@ -53,10 +52,11 @@ recompilerForExpression ghcChan fileName expression defaultValue = do
 
     return valueMVar
 
-startGHC importPaths = do
+startGHC :: [FilePath] -> IO (Chan (FilePath, String, MVar (t, [String])))
+startGHC importPaths_ = do
     ghcChan <- newChan
 
-    _ <- forkOS . void . withGHCSession importPaths . forever $ do
+    _ <- forkOS . void . withGHCSession importPaths_ . forever $ do
         (fileName, expression, resultMVar) <- liftIO (readChan ghcChan)
         
         result <- recompileTargets fileName expression
@@ -66,13 +66,13 @@ startGHC importPaths = do
                 void (swapMVar resultMVar (validResult, noErrors))
             -- If we get a failure, leave the old result alone so it can still be used
             -- until the errors are fixed.
-            Left  newErrors   -> modifyMVar_ resultMVar $ \(validResult, oldErrors) ->
+            Left  newErrors   -> modifyMVar_ resultMVar $ \(validResult, _oldErrors) ->
                  return (validResult, newErrors)
     return ghcChan
 
 -- Starts up a GHC session and then runs the given action within it
 withGHCSession :: [FilePath] -> Ghc a -> IO a
-withGHCSession importPaths action = do
+withGHCSession importPaths_ action = do
     -- defaultErrorHandler defaultFatalMessager defaultFlushOut $ runGhc (Just libdir) $ do
     runGhc (Just libdir) $ do
         -- Get the default dynFlags
@@ -88,7 +88,7 @@ withGHCSession importPaths action = do
         let dflags3 = dflags2 { hscTarget   = HscInterpreted
                               , ghcLink     = LinkInMemory
                               , ghcMode     = CompManager
-                              , importPaths = importPaths
+                              , importPaths = importPaths_
                               } 
                               -- turn off the GHCi sandbox
                               -- since it breaks OpenGL/GUI usage
@@ -113,6 +113,7 @@ withGHCSession importPaths action = do
         action
 
 -- See note below - this isn't actually called right now
+gatherErrors :: GhcMonad m => SourceError -> m [String]
 gatherErrors sourceError = do
     printException sourceError
     dflags <- getSessionDynFlags

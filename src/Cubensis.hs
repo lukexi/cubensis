@@ -15,7 +15,6 @@ import Control.Monad.State
 import Control.Concurrent
 import Halive.Utils
 import SubHalive
-import Data.Maybe
 
 import Types
 
@@ -32,6 +31,12 @@ data Editor a = Editor
   , edModelM44 :: M44 GLfloat
   }
 
+makeExpressionEditor :: Chan (FilePath, String, MVar (b -> [t], [String]))
+                     -> Font
+                     -> FilePath
+                     -> String
+                     -> M44 GLfloat
+                     -> IO (Editor (b -> [t]))
 makeExpressionEditor ghcChan font fileName expr modelM44 = do
   textMVar <- newMVar =<< textRendererFromFile font fileName
   funcMVar <- recompilerForExpression ghcChan fileName expr (const [])
@@ -39,9 +44,13 @@ makeExpressionEditor ghcChan font fileName expr modelM44 = do
   return (Editor textMVar funcMVar modelM44)
 
 -- Negative == Clockwise
+textTilt :: Float
 textTilt = -0.1 * 2 * pi
 
+textM44 :: M44 Float
 textM44 = mkTransformation (axisAngle (V3 1 0 0) textTilt) (V3 0 (-1) 4)
+
+player :: Pose Float
 player  = Pose (V3 0 0 5) (axisAngle (V3 0 1 0) 0)
 
 main :: IO ()
