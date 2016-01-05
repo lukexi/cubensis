@@ -77,8 +77,8 @@ main = do
 
   editors <- sequence 
     [ makeExpressionEditor ghcChan font "defs/Sphere.hs" "sphere" (identity & translation .~ V3 0 0 0)
-    -- , makeExpressionEditor ghcChan font "defs/Cubes1.hs" "someCubes1" (identity & translation .~ V3 0 0 0)
-    -- , makeExpressionEditor ghcChan font "defs/Cubes2.hs" "someCubes2" (identity & translation .~ V3 3 0 0)
+    , makeExpressionEditor ghcChan font "defs/Cubes1.hs" "someCubes1" (identity & translation .~ V3 0 3 0)
+    , makeExpressionEditor ghcChan font "defs/Cubes2.hs" "someCubes2" (identity & translation .~ V3 3 0 0)
     ]
   
   start <- getNow
@@ -100,10 +100,13 @@ main = do
 
           forM_ editors $ \Editor{..} -> do
             (func, errors) <- readMVar edExpr
-            text <- readMVar edText
+            text           <- readMVar edText
+
+            -- Protect against infinite lists, and runtime exceptions (e.g. divide by zero)
             let cubes = take 10000 (func now) -- Allow the function to try to return infinite cubes, but don't use them all
             (cubes', runtimeErrors) <- handle (\e -> return ([], show (e::SomeException))) (return $!! (cubes, ""))
-            let errors' = runtimeErrors:errors
+            let errors' = if null runtimeErrors then errors else runtimeErrors:errors
+            
             withShape cubeShape $ 
               renderCubes projViewM44 edModelM44 cubes'
 

@@ -8,7 +8,7 @@ sphere t =
         , cubeRotation = axisAngle (V3 0 0 1) t
         , cubePosition = rotate (axisAngle (V3 0 1 0) (x*0.3)) 
                        . rotate (axisAngle (V3 1 0 0) (x*0.01)) 
-                       $ (V3 0 1 0)
+                       $ (V3 0 1 1)
         , cubeScale    = realToFrac $ (sin t + 2.1) * 0.05
         } 
       | x <- [0..n]

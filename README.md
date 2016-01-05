@@ -2,7 +2,7 @@
 Cube rendering playground
 
 Code live with:
-`halive app/Main.hs`
+`stack exec cubensis`
 
 Installation:
 ```
@@ -22,5 +22,5 @@ git clone -b win-halive-fix http://github.com/lukexi/bindings-GLFW
 git clone git@github.com:lukexi/cubensis
 cd cubensis
 stack build
-halive app/Main.hs
+stack exec cubensis
 ```
