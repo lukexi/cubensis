@@ -13,11 +13,13 @@ import Control.Lens
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Concurrent
+import Control.Concurrent.STM
 import Control.Exception
 import Control.DeepSeq
 
 import Halive.Utils
 import SubHalive
+import Editor
 
 import Types
 
@@ -26,25 +28,6 @@ data Uniforms = Uniforms
   , uModel :: UniformLocation (M44 GLfloat) 
   , uColor :: UniformLocation (V4 GLfloat) 
   } deriving Data
-
-
-data Editor a = Editor
-  { edText     :: MVar TextRenderer
-  , edExpr     :: MVar (a, [String])
-  , edModelM44 :: M44 GLfloat
-  }
-
-makeExpressionEditor :: Chan (FilePath, String, MVar (b -> [t], [String]))
-                     -> Font
-                     -> FilePath
-                     -> String
-                     -> M44 GLfloat
-                     -> IO (Editor (b -> [t]))
-makeExpressionEditor ghcChan font fileName expr modelM44 = do
-  textMVar <- newMVar =<< textRendererFromFile font fileName
-  funcMVar <- recompilerForExpression ghcChan fileName expr (const [])
-
-  return (Editor textMVar funcMVar modelM44)
 
 -- Negative == Clockwise
 textTilt :: Float
@@ -63,8 +46,7 @@ main = do
   vrPal@VRPal{..} <- reacquire 0 $ initVRPal "Cubensis" [UseOpenVR]
 
   glEnable GL_DEPTH_TEST
-  glEnable GL_BLEND
-  glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+  
   glClearColor 0.0 0.0 0.1 1
 
   shader        <- createShaderProgram "shaders/geo.vert" "shaders/geo.frag"
@@ -76,9 +58,9 @@ main = do
   font          <- createFont "fonts/SourceCodePro-Regular.ttf" 50 glyphProg
 
   editors <- sequence 
-    [ makeExpressionEditor ghcChan font "defs/Sphere.hs" "sphere" (identity & translation .~ V3 0 0 0)
-    , makeExpressionEditor ghcChan font "defs/Cubes1.hs" "someCubes1" (identity & translation .~ V3 0 3 0)
-    , makeExpressionEditor ghcChan font "defs/Cubes2.hs" "someCubes2" (identity & translation .~ V3 3 0 0)
+    [ makeExpressionEditor ghcChan font "defs/Sphere.hs" "sphere"     (const []) (identity & translation .~ V3 0 0 0)
+    , makeExpressionEditor ghcChan font "defs/Cubes1.hs" "someCubes1" (const []) (identity & translation .~ V3 0 3 0)
+    , makeExpressionEditor ghcChan font "defs/Cubes2.hs" "someCubes2" (const []) (identity & translation .~ V3 3 0 0)
     ]
   
   start <- getNow
@@ -98,27 +80,12 @@ main = do
       $ \proj44 eyeView44 -> do
           let projViewM44 = proj44 !*! eyeView44
 
-          forM_ editors $ \Editor{..} -> do
-            (func, errors) <- readMVar edExpr
-            text           <- readMVar edText
-
-            -- Protect against infinite lists, and runtime exceptions (e.g. divide by zero)
-            let cubes = take 10000 (func now) -- Allow the function to try to return infinite cubes, but don't use them all
-            (cubes', runtimeErrors) <- handle (\e -> return ([], show (e::SomeException))) (return $!! (cubes, ""))
-            let errors' = if null runtimeErrors then errors else runtimeErrors:errors
-            
+          forM_ editors $ \editor -> do
+            -- Allow the function to try to return infinite cubes, but don't use them all
+            cubes <- getEditorValue editor [] (\func -> take 10000 (func now))
             withShape cubeShape $ 
-              renderCubes projViewM44 edModelM44 cubes'
-
-            let textMVP = projViewM44 !*! edModelM44 !*! textM44
-            renderText text textMVP (V3 1 1 1)
-
-            let errorsMVP = projViewM44 
-                            !*! edModelM44 
-                            !*! (identity & translation .~ V3 1 0 0)
-                            !*! textM44
-            errorRenderer <- createTextRenderer font (textBufferFromString "noFile" (unlines errors'))
-            renderText errorRenderer errorsMVP (V3 1 0.5 0.5)
+              renderCubes projViewM44 (edModelM44 editor) cubes
+            renderEditor editor projViewM44
 
 
 renderCubes :: (MonadIO m, MonadReader (Shape Uniforms) m) 
@@ -134,17 +101,15 @@ renderCubes projViewM44 parentModelM44 cubes = do
     uniformM44 uModel modelM44
     drawShape
 
-
 handleEvents :: VRPal -> Pose Float -> Editor a -> IO ()
-handleEvents VRPal{..} playerPose Editor{..} = processEvents gpEvents $ \e -> do
+handleEvents VRPal{..} playerPose editor@Editor{..} = processEvents gpEvents $ \e -> do
   closeOnEscape gpWindow e
 
-  modifyMVar edText $ \text -> do 
-    newText <- execStateT (handleTextBufferEvent gpWindow e id) text
-    return (newText, ())
+  editEditorText editor $ 
+    execStateT (handleTextBufferEvent gpWindow e id)
 
-  onMouseDown e $ \_ -> modifyMVar edText $ \text -> do
+  onMouseDown e $ \_ -> editEditorText editor $ \text -> do
     winProj44 <- getWindowProjection gpWindow 45 0.1 1000
     ray       <- cursorPosToWorldRay gpWindow winProj44 playerPose
     newText   <- castRayToBuffer ray text (edModelM44 !*! textM44)
-    return (newText, ())
+    return newText
