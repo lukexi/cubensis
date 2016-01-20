@@ -13,10 +13,7 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 library
-  exposed-modules:  SubHalive
-                    FindPackageDBs
-                    Editor
-                    Types
+  exposed-modules:  Types
                     Cubensis
   ghc-options:      -Wall -O2
   build-depends:      base

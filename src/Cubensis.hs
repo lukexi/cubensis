@@ -18,8 +18,7 @@ import Control.Exception
 import Control.DeepSeq
 
 import Halive.Utils
-import SubHalive
-import Editor
+import TinyRick.Recompiler1
 
 import Types
 
@@ -37,7 +36,7 @@ textM44 :: M44 Float
 textM44 = mkTransformation (axisAngle (V3 1 0 0) textTilt) (V3 0 (-1) 4)
 
 player :: Pose Float
-player  = Pose (V3 0 0 5) (axisAngle (V3 0 1 0) 0)
+player  = Pose (V3 0 0 3) (axisAngle (V3 0 1 0) 0)
 
 main :: IO ()
 main = do
