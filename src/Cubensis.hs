@@ -6,7 +6,6 @@ module Cubensis where
 import Graphics.UI.GLFW.Pal as Exports
 import Graphics.VR.Pal as Exports
 import Graphics.GL.Pal as Exports
-import TinyRick
 
 import Control.Monad
 import Control.Lens
@@ -18,7 +17,9 @@ import Control.Exception
 import Control.DeepSeq
 
 import Halive.Utils
-import TinyRick.Recompiler1
+import Halive.SubHalive
+import Graphics.GL.Freetype
+import Graphics.GL.TextBuffer
 
 import Types
 
