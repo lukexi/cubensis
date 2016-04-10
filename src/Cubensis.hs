@@ -2,11 +2,12 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE LambdaCase #-}
 module Cubensis where
 
-import Graphics.UI.GLFW.Pal as Exports
-import Graphics.VR.Pal as Exports
-import Graphics.GL.Pal as Exports
+import Graphics.UI.GLFW.Pal
+import Graphics.VR.Pal
+import Graphics.GL.Pal hiding (getNow)
 
 import Control.Monad
 import Control.Lens.Extra
@@ -16,10 +17,12 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Exception
 import Control.DeepSeq
+import Data.Time
 
 import Halive.Utils
 import Halive.SubHalive
 import Halive.Recompiler
+import Halive.FileListener
 import Graphics.GL.Freetype
 import Graphics.GL.TextBuffer
 
@@ -32,14 +35,14 @@ data Uniforms = Uniforms
   } deriving Data
 
 data World = World
-    { _wldPlayer :: Pose GLfloat
+    { _wldPlayer :: M44 GLfloat
     , _wldEditor :: Editor
     }
 
 data Editor = Editor
     { _edTextRenderer :: TextRenderer
     , _edValue        :: Float -> [Cube]
-    , _edResultsChan  :: TChan CompilationResult
+    , _edRecompiler   :: Recompiler
     , _edModelM44     :: M44 GLfloat
     }
 makeLenses ''Editor
@@ -47,13 +50,17 @@ makeLenses ''World
 
 makeExpressionEditor ghcChan font fileName exprName modelM44 = do
     resultsChan  <- recompilerForExpression ghcChan fileName exprName
-    textRenderer <- textRendererFromFile font fileName
+    textRenderer <- textRendererFromFile font fileName WatchFile
 
     return $ Editor textRenderer (const []) resultsChan modelM44
 
 tickEditor now = do
+
     editor <- use wldEditor
-    result <- tryReadTChanIO (editor ^. edResultsChan)
+    
+    refreshTextRendererFromFile (wldEditor . edTextRenderer)
+
+    result <- liftIO . atomically $ tryReadTChan (recResultTChan $ editor ^. edRecompiler)
     
     case result of
         Just (Right compiledValue) -> wldEditor . edValue .= getCompiledValue compiledValue
@@ -64,19 +71,21 @@ tickEditor now = do
 
     return $ take 10000 (func now)
 
+
+
 -- Negative == Clockwise
 textTilt :: GLfloat
 textTilt = -0.1 * 2 * pi
 
 textM44 :: M44 GLfloat
-textM44 = mkTransformation (axisAngle (V3 1 0 0) textTilt) (V3 0 (-1) 4)
+textM44 = mkTransformation (axisAngle (V3 1 0 0) textTilt) (V3 0 (-1) 4) !*! scaleMatrix (1/50)
 
-playerStart :: Pose GLfloat
-playerStart  = Pose (V3 0 0 5) (axisAngle (V3 0 1 0) 0)
+playerStart :: M44 GLfloat
+playerStart  = mkTransformation (axisAngle (V3 0 1 0) 0) (V3 0 0 5)
 
 main :: IO ()
 main = do
-    ghcChan <- startGHC ["defs"]
+    ghcChan <- startGHC defaultGHCSessionConfig
 
     vrPal@VRPal{..} <- reacquire 0 $ initVRPal "Cubensis" [UseOpenVR]
 
@@ -94,16 +103,18 @@ main = do
 
     editor        <- makeExpressionEditor ghcChan font "defs/Sphere.hs" "sphere" (identity & translation .~ V3 0 0 0)
     
-    start <- getNow
+    start <- realToFrac . utctDayTime <$> getNow vrPal
 
     let world = World playerStart editor
-    void . flip runStateT world . whileVR vrPal $ \headM44 _hands events -> do
-        handleEvents vrPal
-        applyMouseLook gpWindow wldPlayer
+    void . flip runStateT world . whileWindow gpWindow $ do
+        --applyMouseLook gpWindow wldPlayer
         player <- use wldPlayer
 
+        (headM44, events) <- tickVR vrPal player
+        handleEvents vrPal events
+
         -- Have time start at 0 seconds
-        now <- subtract start <$> getNow
+        now <- subtract start . realToFrac . utctDayTime <$> getNow vrPal
         let _ = now::Float
 
 
@@ -114,18 +125,17 @@ main = do
         cubes <- tickEditor now
         --cubes <- getEditorValue editor [] (\func -> take 10000 (func now))
 
-        renderWith vrPal player headM44
-            (glClear (GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT))
-            $ \proj44 eyeView44 -> do
+        renderWith vrPal headM44 $ \proj44 eyeView44 -> do
+            glClear (GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT)
+            
+            let projViewM44 = proj44 !*! eyeView44
                 
-                let projViewM44 = proj44 !*! eyeView44
-                    
-                withShape cubeShape $ 
-                    renderCubes projViewM44 modelM44 cubes
-                glEnable GL_BLEND
-                glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
-                renderText (editor ^. edTextRenderer) (projViewM44 !*! modelM44 !*! textM44) (V3 1 1 1)
-                glDisable GL_BLEND
+            withShape cubeShape $ 
+                renderCubes projViewM44 modelM44 cubes
+            glEnable GL_BLEND
+            glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+            renderText (editor ^. edTextRenderer) projViewM44 (modelM44 !*! textM44)
+            glDisable GL_BLEND
 
 renderCubes :: (MonadIO m, MonadReader (Shape Uniforms) m) 
             => M44 GLfloat -> M44 GLfloat -> [Cube] -> m ()
@@ -141,15 +151,26 @@ renderCubes projViewM44 parentModelM44 cubes = do
         drawShape
 
 --handleEvents :: (MonadState World m, MonadIO m) => VRPal -> m ()
-handleEvents VRPal{..} = processEvents gpEvents $ \e -> do
-    closeOnEscape gpWindow e
+handleEvents VRPal{..} events = forM_ events $ \case
+    VREvent _ -> return ()
+    GLFWEvent e -> do
+        closeOnEscape gpWindow e
 
-    handleTextBufferEvent gpWindow e (wldEditor . edTextRenderer)
-
-    player <- use wldPlayer
-    onMouseDown e $ \_ -> do
         editor          <- use wldEditor
-        winProj44       <- getWindowProjection gpWindow 45 0.1 1000
-        ray             <- cursorPosToWorldRay gpWindow winProj44 player
-        newTextRenderer <- setCursorTextRendererWithRay ray (editor ^. edTextRenderer) (editor ^. edModelM44 !*! textM44)
-        wldEditor . edTextRenderer .= newTextRenderer
+        
+        let isKey = case e of
+                Key _ _ _ _ -> True
+                Character _ -> True
+                _           -> False
+        when isKey $ do 
+            setIgnoreTimeNow (editor ^. edRecompiler . to recFileEventListener)
+            forM_ (editor ^. edTextRenderer . txrFileEventListener) setIgnoreTimeNow
+
+        handleTextBufferEvent gpWindow e (wldEditor . edTextRenderer)
+
+        player <- use wldPlayer
+        onMouseDown e $ \_ -> do
+            winProj44       <- getWindowProjection gpWindow 45 0.1 1000
+            ray             <- cursorPosToWorldRay gpWindow winProj44 (poseFromMatrix player)
+            newTextRenderer <- setCursorTextRendererWithRay ray (editor ^. edTextRenderer) (editor ^. edModelM44 !*! textM44)
+            wldEditor . edTextRenderer .= newTextRenderer
