@@ -1,4 +1,4 @@
- import Types
+import Types
 import Graphics.GL.Pal
 
 sphere :: Float -> [Cube]
